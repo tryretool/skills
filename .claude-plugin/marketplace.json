@@ -10,7 +10,7 @@
       "name": "retool-import",
       "source": "./plugins/retool-import",
       "description": "Import an existing React app into Retool as a Retool React app. Discovers external services in your repo, matches them against your Retool resources, and hands a prepared import plan to Retool's React app sandbox agent.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Retool",
         "email": "support@retool.com"
