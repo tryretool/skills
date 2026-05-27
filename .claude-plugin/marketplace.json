@@ -1,0 +1,25 @@
+{
+  "name": "tryretool-skills",
+  "owner": {
+    "name": "Retool",
+    "email": "support@retool.com"
+  },
+  "description": "Skills that teach Claude Code how to use Retool, built and maintained by Retool.",
+  "plugins": [
+    {
+      "name": "retool-import",
+      "source": "./plugins/retool-import",
+      "description": "Import an existing React app into Retool as a Retool React app. Discovers external services in your repo, matches them against your Retool resources, and hands a prepared import plan to Retool's React app sandbox agent.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Retool",
+        "email": "support@retool.com"
+      },
+      "homepage": "https://retool.com",
+      "repository": "https://github.com/tryretool/skills",
+      "license": "Apache-2.0",
+      "keywords": ["retool", "import", "react", "mcp"],
+      "category": "integrations"
+    }
+  ]
+}
