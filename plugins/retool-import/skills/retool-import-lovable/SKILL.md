@@ -1,6 +1,6 @@
 ---
 name: retool-import-lovable
-description: Use this skill when the user wants to import a Lovable-generated React app (legacy Vite + Supabase) into Retool as an R^2 app. Detected by `lovable-tagger` in package.json or a `.lovable/` directory at the repo root. The skill skips vendor-agnostic discovery because Lovable's structure (Vite + react-router-dom + Supabase edge functions calling Lovable's connector gateway) is known up front; it pre-fills the import plan from structural facts, asks targeted HITL only for the choices that genuinely need a human (which Retool resource backs each Supabase edge function and migration), and hands a prepared import plan to Retool's R^2 sandbox agent via the `retool_submit_prepared_import` MCP tool.
+description: Use this skill when the user wants to import a Lovable-generated React app (legacy Vite + Supabase) into Retool as a Retool React app. Detected by `lovable-tagger` in package.json or a `.lovable/` directory at the repo root. The skill skips vendor-agnostic discovery because Lovable's structure (Vite + react-router-dom + Supabase edge functions calling Lovable's connector gateway) is known up front; it pre-fills the import plan from structural facts, asks targeted HITL only for the choices that genuinely need a human (which Retool resource backs each Supabase edge function and migration), and hands a prepared import plan to Retool's React app sandbox agent via the `retool_submit_prepared_import` MCP tool.
 ---
 
 # retool-import-lovable
@@ -82,32 +82,32 @@ The following file-role mapping is true for every legacy-Vite Lovable project. T
 
 | Source path | Role | Disposition |
 | ----------- | ---- | ----------- |
-| `src/main.tsx` | `createRoot` bootstrap | DROP — R2's baked `/frontend/index.tsx` owns this |
+| `src/main.tsx` | `createRoot` bootstrap | DROP — Retool's baked `/frontend/index.tsx` owns this |
 | `src/App.tsx` | `<Routes>` table | PORT to `/frontend/App.tsx` |
 | `src/pages/*.tsx` | route page components | PORT to `/frontend/pages/` |
 | `src/components/<feature>.tsx` | feature components | PORT to `/frontend/components/` |
-| `src/components/ui/*.tsx` | shadcn primitives | DROP — R2 has these baked at `/frontend/lib/shadcn/` |
-| `src/hooks/use-toast.ts`, `src/hooks/use-mobile.tsx` | shadcn hook duplicates | DROP — R2 baked |
+| `src/components/ui/*.tsx` | shadcn primitives | DROP — Retool has these baked at `/frontend/lib/shadcn/` |
+| `src/hooks/use-toast.ts`, `src/hooks/use-mobile.tsx` | shadcn hook duplicates | DROP — Retool baked |
 | `src/hooks/<other>.{ts,tsx}` | user hooks | PORT to `/frontend/hooks/` |
-| `src/lib/utils.ts` | `cn()` helper | DROP — R2 baked has it |
+| `src/lib/utils.ts` | `cn()` helper | DROP — Retool baked has it |
 | `src/lib/edge.ts` | `callEdgeFunction` wrapper | DROP — call sites rewrite to generated backend-fn hooks |
 | `src/integrations/supabase/client.ts` | Supabase client | DROP — call sites rewrite to generated backend-fn hooks |
 | `src/integrations/supabase/types.ts` | auto-generated DB types | DROP from the import; surface schema in HITL instead |
-| `src/index.css` | Tailwind directives + global CSS | MERGE custom rules into R2's baked Tailwind; surface non-default `@layer` blocks in Styling adapters |
+| `src/index.css` | Tailwind directives + global CSS | MERGE custom rules into Retool's baked Tailwind; surface non-default `@layer` blocks in Styling adapters |
 | `src/App.css` | additional CSS | PORT to `/frontend/App.css` only if non-empty and not just Vite defaults |
-| `src/vite-env.d.ts` | Vite TS shim | DROP — R2 baked |
-| `supabase/functions/<name>/index.ts` | Deno edge function | REWRITE as R2 backend function — one HITL prompt per function (see step 4.1) |
+| `src/vite-env.d.ts` | Vite TS shim | DROP — Retool baked |
+| `supabase/functions/<name>/index.ts` | Deno edge function | REWRITE as Retool backend function — one HITL prompt per function (see step 4.1) |
 | `supabase/migrations/*.sql` | Postgres schema migrations | Surface tables in HITL; user picks Retool Postgres resource (see step 4.2). Do NOT auto-apply. |
 | `supabase/config.toml` | Supabase project ID | DROP |
 | `public/*` | static assets (favicon, robots.txt, etc.) | PORT to `/frontend/public/` |
-| `vite.config.ts` | Vite config (loads `lovable-tagger`) | DROP — R2 owns its baked Vite config |
-| `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json` | TS configs | DROP — R2 baked |
+| `vite.config.ts` | Vite config (loads `lovable-tagger`) | DROP — Retool owns its baked Vite config |
+| `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json` | TS configs | DROP — Retool baked |
 | `tailwind.config.ts` / `tailwind.config.js` | Tailwind theme | DROP the file; surface non-default theme extensions in Styling adapters |
-| `postcss.config.{js,cjs,mjs}` | PostCSS config | DROP — R2 baked |
-| `eslint.config.{js,cjs}` | ESLint config | DROP — R2 baked |
-| `components.json` | shadcn registry config | DROP — R2 owns its shadcn registry |
-| `index.html` | Vite HTML entry | DROP — R2 baked |
-| `playwright.config.ts`, `playwright-fixture.ts`, `vitest.config.ts` | testing scaffold | DROP — R2 doesn't execute these |
+| `postcss.config.{js,cjs,mjs}` | PostCSS config | DROP — Retool baked |
+| `eslint.config.{js,cjs}` | ESLint config | DROP — Retool baked |
+| `components.json` | shadcn registry config | DROP — Retool owns its shadcn registry |
+| `index.html` | Vite HTML entry | DROP — Retool baked |
+| `playwright.config.ts`, `playwright-fixture.ts`, `vitest.config.ts` | testing scaffold | DROP — Retool doesn't execute these |
 | `.lovable/sync.config.json` | Lovable GitHub sync metadata | DROP |
 | `.env`, `.env.local` | secrets | DROP (already filtered by shared zip filter) |
 | `.env.example` | env template | KEEP (shared zip filter already preserves this) |
@@ -146,7 +146,7 @@ For each `supabase/functions/<name>/index.ts` (skip the `_shared/` subdirectory 
    Edge function: supabase/functions/<name>/
    Calls: <service> via Lovable connector gateway
        (or: "direct <vendor> SDK usage" if no gateway URL)
-   Will become R2 backend function: <camelCase from name>
+   Will become Retool backend function: <camelCase from name>
 
    Compatible Retool resources of type [<types>]:
      1) <name> (<type>, environments: ...)
@@ -187,7 +187,7 @@ If `supabase/migrations/` contains any `*.sql` files:
 
    IMPORTANT: this skill does NOT auto-apply your migrations. After import,
    you'll need to apply the SQL in supabase/migrations/ against your chosen
-   Postgres resource manually (or via R2's follow-up flow).
+   Postgres resource manually (or via Retool's follow-up flow).
    ```
 
 6. Record the answer.
@@ -201,11 +201,11 @@ If any are found, present:
 ```
 Supabase Auth detected. Used in: <comma-separated file paths>.
 
-R2 does not currently auto-translate Supabase Auth to Retool sessions.
+Retool does not currently auto-translate Supabase Auth to Retool sessions.
 Pick a strategy:
   1) USE_MOCK_DATA — mock the current user during import; wire later
   2) MAP_TO_RETOOL_SESSION — replace useAuth() / supabase.auth calls
-     with R2's useCurrentUser() hook (best-effort substitution; some
+     with Retool's useCurrentUser() hook (best-effort substitution; some
      code paths may need manual review)
   3) Type a custom resolution strategy describing what you want
 ```
@@ -272,7 +272,7 @@ Start from `../../references/IMPORT_PLAN.template.md`. Fill in:
 | ----- | --------- | ------- | ------------- |
 | `/` | `src/pages/Index.tsx` | <one-line purpose from the page component> | Y/N |
 
-`auth required` is `Y` if the page imports anything from `@supabase/supabase-js` auth helpers, else `N`. If `src/App.tsx`'s route table can't be parsed cleanly (unusual route shape, dynamic imports), leave the `<!-- TODO: R2 fills this in -->` marker and an empty table.
+`auth required` is `Y` if the page imports anything from `@supabase/supabase-js` auth helpers, else `N`. If `src/App.tsx`'s route table can't be parsed cleanly (unusual route shape, dynamic imports), leave the `<!-- TODO: Retool fills this in -->` marker and an empty table.
 
 **Component tree** — walk `src/App.tsx` → page imports → component imports to depth 3. Indented bullet list. Annotate nodes:
 - `(data-fetching)` if they use `useQuery`, `supabase.from()`, or `callEdgeFunction`
@@ -291,30 +291,30 @@ Start from `../../references/IMPORT_PLAN.template.md`. Fill in:
 | -------- | ------ | -------------- | --------------- | ----- |
 | http_api | linear-via-lovable-gateway | `supabase/functions/linear-tickets/index.ts` | <user pick> | via Lovable connector gateway |
 
-**Backend functions to author** — pre-populate one row per edge function. R2 fills the target path and any implementation hints.
+**Backend functions to author** — pre-populate one row per edge function. Retool fills the target path and any implementation hints.
 
 | backend fn | source | description |
 | ---------- | ------ | ----------- |
 | `<camelCase of dir name>` | `supabase/functions/<name>/index.ts` | <one-sentence summary from the file's first comment or first call> |
 
-**Source → target mapping** — pre-populate every row from the structural-facts table in step 3 (every file the skill actually saw, with its disposition). Leave the `class` column BLANK — R2 fills it in Phase M classification.
+**Source → target mapping** — pre-populate every row from the structural-facts table in step 3 (every file the skill actually saw, with its disposition). Leave the `class` column BLANK — Retool fills it in Phase M classification.
 
 | source path | target path | class | transform notes |
 | ----------- | ----------- | ----- | --------------- |
-| `src/App.tsx` | `/frontend/App.tsx` | | port verbatim; substitute react-router import to R2's react-router |
+| `src/App.tsx` | `/frontend/App.tsx` | | port verbatim; substitute react-router import to Retool's react-router |
 | `src/pages/Index.tsx` | `/frontend/pages/Index.tsx` | | port; rewrite supabase.from/callEdgeFunction to generated hooks |
 | `src/integrations/supabase/client.ts` | DROP | | call sites rewrite to generated backend-fn hooks |
 | `supabase/functions/linear-tickets/index.ts` | `/backend/functions/getLinearTickets.ts` (or similar) | | call Retool Linear resource (<user pick>); preserve action routing |
 
-Above the table, place `<!-- partial: rows populated by retool-import-lovable; class column left blank for R2 -->` so R2 knows the rows are real, not placeholders.
+Above the table, place `<!-- partial: rows populated by retool-import-lovable; class column left blank for Retool -->` so Retool knows the rows are real, not placeholders.
 
-**Styling & theming adapters** — if `tailwind.config.ts` extends the default theme, list the extension keys here (e.g. "custom colors: brand-primary, brand-secondary; custom fontFamily: 'Sora'"). If `src/index.css` contains `@layer` blocks beyond Tailwind's defaults, list those. If neither, write "No non-default theme extensions detected. Use R2's baked Tailwind config as-is."
+**Styling & theming adapters** — if `tailwind.config.ts` extends the default theme, list the extension keys here (e.g. "custom colors: brand-primary, brand-secondary; custom fontFamily: 'Sora'"). If `src/index.css` contains `@layer` blocks beyond Tailwind's defaults, list those. If neither, write "No non-default theme extensions detected. Use Retool's baked Tailwind config as-is."
 
 **Dependency delta** — list the packages in `package.json` that need migration treatment:
 
-- ADD: <leave blank — R2 decides what's missing from `/frontend/package.json`>
+- ADD: <leave blank — Retool decides what's missing from `/frontend/package.json`>
 - SUBSTITUTE: `@supabase/supabase-js` → generated backend-fn hooks (no direct dep)
-- DELETE: `lovable-tagger`, `@vitejs/plugin-react-swc` (R2 baked uses its own Vite plugin)
+- DELETE: `lovable-tagger`, `@vitejs/plugin-react-swc` (Retool baked uses its own Vite plugin)
 - KEEP: `react`, `react-dom`, `react-router-dom`, all `@radix-ui/*`, `@tanstack/react-query`, `lucide-react`, `tailwind-merge`, `clsx`, `class-variance-authority`, `recharts`, `date-fns`, `react-hook-form`, `zod`, etc.
 
 **Cut list** — populate from step 5a's drop list. Include both canonical drops (lockfiles, `.env`, `__MACOSX/`) and Lovable-specific drops (`lovable-tagger`-loading `vite.config.ts`, `components.json`, `src/components/ui/`, etc.). One bullet per dropped path with a one-line reason.
@@ -324,11 +324,11 @@ Above the table, place `<!-- partial: rows populated by retool-import-lovable; c
 - "Migrations are NOT auto-applied. Run `supabase/migrations/*.sql` against the chosen Postgres resource manually after import."
 - "Resource matching is currently name + type only; host metadata isn't yet surfaced by `retool_list_resources`."
 - For every `USE_MOCK_DATA` resolution: "<service name> is mocked during import; wire to a real resource later."
-- If Supabase Auth was detected and resolved to MAP_TO_RETOOL_SESSION: "R2 will attempt a best-effort substitution of `useAuth()` / `supabase.auth.*` calls with `useCurrentUser()`. Some code paths may require manual review."
-- If any RLS policies were detected in the migrations: "RLS policies in the original schema are NOT translated. R2 will apply at the application layer if you specify per-row permissions; otherwise the Retool resource's access controls apply."
-- If any edge function's category was `unknown`: "<function name> couldn't be classified from the gateway URL or imports. R2 will need to determine the right backend-function shape."
+- If Supabase Auth was detected and resolved to MAP_TO_RETOOL_SESSION: "Retool will attempt a best-effort substitution of `useAuth()` / `supabase.auth.*` calls with `useCurrentUser()`. Some code paths may require manual review."
+- If any RLS policies were detected in the migrations: "RLS policies in the original schema are NOT translated. Retool will apply at the application layer if you specify per-row permissions; otherwise the Retool resource's access controls apply."
+- If any edge function's category was `unknown`: "<function name> couldn't be classified from the gateway URL or imports. Retool will need to determine the right backend-function shape."
 
-**Phased build order** — leave the `<!-- TODO: R2 fills this in -->` marker. R2 derives this in Phase M.
+**Phased build order** — leave the `<!-- TODO: Retool fills this in -->` marker. Retool derives this in Phase M.
 
 ## 6. Handoff
 
@@ -361,4 +361,4 @@ If the tool call fails, surface the error verbatim and stop. Do NOT retry silent
 
 ## Summary for the user
 
-This skill imports a legacy-Vite Lovable + Supabase project into Retool as an R^2 app. It skips the generic vendor-agnostic discovery scan because Lovable's structure is well-known: it pre-fills the import plan from structural facts, asks one HITL prompt per Supabase edge function (mapping each to a Retool resource) plus one combined prompt per migration directory, packages your source tree with secrets and vendor-specific configs stripped, and hands the prepared plan to Retool's R^2 sandbox agent. You'll get an editor URL when R^2 finishes generating the app.
+This skill imports a legacy-Vite Lovable + Supabase project into Retool as a Retool React app. It skips the generic vendor-agnostic discovery scan because Lovable's structure is well-known: it pre-fills the import plan from structural facts, asks one HITL prompt per Supabase edge function (mapping each to a Retool resource) plus one combined prompt per migration directory, packages your source tree with secrets and vendor-specific configs stripped, and hands the prepared plan to Retool's React app sandbox agent. You'll get an editor URL when Retool finishes generating the app.
