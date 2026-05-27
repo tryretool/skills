@@ -1,11 +1,11 @@
 ---
 name: retool-import
-description: Use this skill when the user wants to import an existing React application into Retool as an R^2 app. The skill runs in the user's repo, discovers external services the app talks to, matches them against the user's Retool resources via MCP, asks the user to confirm matches via in-terminal HITL, and hands a prepared import plan + cleaned source tree to Retool's R^2 sandbox agent for execution.
+description: Use this skill when the user wants to import an existing React application into Retool as a Retool React app. The skill runs in the user's repo, discovers external services the app talks to, matches them against the user's Retool resources via MCP, asks the user to confirm matches via in-terminal HITL, and hands a prepared import plan + cleaned source tree to Retool's React app sandbox agent for execution.
 ---
 
 # retool-import
 
-This skill is invoked when the user opens Claude Code in the root of their existing React app, has the Retool MCP server attached, and asks to import the app into Retool. The skill runs a six-phase local state machine and hands a prepared import plan to Retool's R^2 sandbox agent via the `retool_submit_prepared_import` MCP tool.
+This skill prepares a user's app for being imported into Retool via MCP. The skill runs a six-phase local state machine and hands a prepared import plan to Retool's React app sandbox agent via the `retool_submit_prepared_import` MCP tool.
 
 ## State machine overview
 
@@ -23,22 +23,22 @@ The skill runs six phases sequentially. Each phase has a fixed input, a fixed ou
 
 Before Phase 1, verify two things and stop with a clear error if either fails:
 
-1. **React repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `remix`, `@remix-run/*`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps.
+1. **React repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps.
 2. **Required MCP tools.** The skill needs `retool_list_resources` (existing) and `retool_submit_prepared_import` (new, gated by the `mcpServerRetoolImportEnabled` flag). If `retool_submit_prepared_import` is not visible as an MCP tool, stop and tell the user: "The retool-import skill requires `retool_submit_prepared_import`, which is gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
 
 If both checks pass, proceed to Phase 1.
 
 ## Phase 1 — Recon
 
-Mirror R2's Phase 1. Discover the workspace shape and emit a structured summary. Read only what's strictly necessary.
+Discover the workspace shape and emit a structured summary. Read only what's strictly necessary.
 
 Procedure:
 
 1. Examine the top-level directory shape of the repo (one `ls` of the repo root).
 2. Search for and read all `package.json` files across the repo (skip anything inside `node_modules`).
 3. Read all `README.md` files at the root and at each `package.json`'s directory, if present.
-4. Find and read the React entry file. The entry file is typically `src/main.tsx`, `src/main.ts`, `src/index.tsx`, `src/index.ts`, or `app/page.tsx` / `app/layout.tsx` for Next.js / `app/root.tsx` for Remix. Pick whichever exists.
-5. If the router config lives in a separate file (`router.tsx`, `routes.ts`, `app/routes/*` for Remix, `pages/*` for older Next, or `app/*` for Next App Router), read it.
+4. Find and read the React entry file. The entry file is typically `src/main.tsx`, `src/main.ts`, `src/index.tsx`, `src/index.ts`, or `app/page.tsx` / `app/layout.tsx` for Next.js. Pick whichever exists.
+5. If the router config lives in a separate file (`router.tsx`, `routes.ts`, `pages/*` for older Next, or `app/*` for Next App Router), read it.
 6. Identify server-side directories (`server/`, `backend/`, `api/`, `functions/`, `supabase/functions/`, etc.) if any exist.
 
 Emit a structured recon summary in chat, in this EXACT shape:
@@ -210,7 +210,7 @@ Build a `Record<string, { code: string }>` keyed by repo-relative path. This is 
 
 ### 5b. Partial IMPORT_PLAN.md
 
-Start from `references/IMPORT_PLAN.template.md`. Fill in every section the local skill can confidently populate; leave a `<!-- TODO: R2 fills this in -->` marker in sections it cannot.
+Start from `references/IMPORT_PLAN.template.md`. Fill in every section the local skill can confidently populate; leave a `<!-- TODO: Retool fills this in -->` marker in sections it cannot.
 
 - **`<plan_state>status=prepared_by_mcp</plan_state>`** — at the top. The template already includes this; keep it.
 - **Overview** — 1-2 paragraphs derived from the Phase 1 recon summary.
@@ -218,15 +218,15 @@ Start from `references/IMPORT_PLAN.template.md`. Fill in every section the local
 - **Component tree** — populate if the entry file's top-down graph to depth 3 is confidently extractable. Otherwise leave the TODO marker.
 - **Data needs (resolved)** — one row per discovered service whose category is `database` / `auth` / `object_storage` / `realtime`. Columns: `category | vendor | evidence_paths | resolved_target | notes`. `resolved_target` is the resource name the user picked in Phase 4, or `USE_MOCK_DATA`.
 - **External services (resolved)** — one row per discovered service whose category is `http_api` / `email` / `sms` / `payments` / `queue` / `analytics` / `search` / `ai` / `unknown`. Same columns as Data needs (resolved).
-- **Backend functions to author** — leave the TODO marker. R2 derives this from Data needs in Phase 4.
-- **Source → target mapping** — leave the table header but no rows. R2 fills both the rows and the `class` column. Place a `<!-- TODO: R2 fills this in -->` marker above the table.
+- **Backend functions to author** — leave the TODO marker. Retool derives this from Data needs in Phase 4.
+- **Source → target mapping** — leave the table header but no rows. Retool fills both the rows and the `class` column. Place a `<!-- TODO: Retool fills this in -->` marker above the table.
 - **Styling & theming adapters** — leave the TODO marker.
 - **Dependency delta** — leave the TODO marker.
 - **Cut list** — populate with any path the zip filter dropped that the user should know about (e.g. `node_modules/`, `dist/`, `.env`, oversized files).
 - **Open questions / known gaps** — populate with: every `category=unknown` service, every service for which the user picked `USE_MOCK_DATA`, the matcher's name+type-only limitation, any prerequisite-check soft warnings.
 - **Phased build order** — leave the TODO marker.
 
-Do NOT fill sections you cannot fill confidently. R2 expects to see the TODO markers and treats them as work assignments.
+Do NOT fill sections you cannot fill confidently. Retool expects to see the TODO markers and treats them as work assignments.
 
 Proceed to Phase 6 once both artifacts are built.
 
@@ -260,4 +260,4 @@ If the tool call fails, surface the error verbatim and stop. Do NOT retry silent
 
 ## Summary for the user
 
-This skill recons your React repo, fans out parallel discovery subagents to find every external service your code talks to (databases, auth, storage, realtime, HTTP APIs, payments, etc.), looks up matching Retool resources for each one, asks you to pick the right resource (or `USE_MOCK_DATA`) per service in the terminal, packages your source tree with secrets and large files stripped out, builds a partially-populated `IMPORT_PLAN.md`, and hands it all to Retool's R^2 sandbox agent. R^2 finishes classification and execution; you end up with a working Retool app whose editor URL is printed at the end.
+This skill recons your React repo, fans out parallel discovery subagents to find every external service your code talks to (databases, auth, storage, realtime, HTTP APIs, payments, etc.), looks up matching Retool resources for each one, asks you to pick the right resource (or `USE_MOCK_DATA`) per service in the terminal, packages your source tree with secrets and large files stripped out, builds a partially-populated `IMPORT_PLAN.md`, and hands it all to Retool's React app sandbox agent. Retool finishes classification and execution; you end up with a working Retool app whose editor URL is printed at the end.

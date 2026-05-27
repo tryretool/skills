@@ -74,21 +74,23 @@ export function getFileExtension(fileName: string): string {
   return lastDot >= 0 ? fileName.slice(lastDot).toLowerCase() : ''
 }
 
+// .env / .env.local are intentionally NOT included: they routinely contain
+// API keys, DB passwords, and other secrets. .env.example is a documented
+// convention for committed templates and is safe to include.
+const EXTENSIONLESS_TEXT_FILENAMES = new Set([
+  '.gitignore',
+  '.eslintrc',
+  '.prettierrc',
+  'Dockerfile',
+  'Makefile',
+  '.env.example',
+])
+
 export function isTextFile(path: string): boolean {
   const ext = getFileExtension(path)
   if (TEXT_EXTENSIONS.has(ext)) return true
   const base = path.split('/').pop() ?? ''
-  // .env / .env.local are intentionally NOT extracted: they routinely contain
-  // API keys, DB passwords, and other secrets. .env.example is a documented
-  // convention for committed templates and is safe to include.
-  return (
-    base === '.gitignore' ||
-    base === '.eslintrc' ||
-    base === '.prettierrc' ||
-    base === 'Dockerfile' ||
-    base === 'Makefile' ||
-    base === '.env.example'
-  )
+  return EXTENSIONLESS_TEXT_FILENAMES.has(base)
 }
 
 export function shouldSkipZipEntry(path: string): boolean {

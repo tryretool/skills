@@ -8,7 +8,7 @@
 
 ## Routes & pages
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
 
 <!-- If routes are confidently extractable from the router file, populate this table. Otherwise leave the TODO marker above and remove the empty table. Columns: route | page file | purpose | auth required. One row per route. -->
 
@@ -17,7 +17,7 @@
 
 ## Component tree
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
 
 <!-- If the entry file's top-down component graph is confidently extractable to depth 3, populate this indented bullet list. Otherwise leave the TODO marker above and delete the empty list below. Annotate each node with `(data-fetching)` if it owns data fetching and `(stateful)` if it owns non-trivial local state. -->
 
@@ -39,26 +39,26 @@
 
 ## Backend functions to author
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
 
 ## Source → target mapping
 
-<!-- TODO: R2 fills this in — `class` column is left blank by the local skill and populated by R2 during Phase 4 classification. -->
+<!-- TODO: Retool fills this in — `class` column is left blank by the local skill and populated by Retool during Phase 4 classification. -->
 
 | source path | target path | class | transform notes |
 | ----------- | ----------- | ----- | --------------- |
 
 ## Styling & theming adapters
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
 
 ## Dependency delta
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
 
 ## Cut list
 
-<!-- Files / directories from the source tree that the local skill already dropped via the zip filter (node_modules, dist, build, lockfiles, minified bundles, .env / .env.local, files > 1 MiB, etc.). R2 may append additional entries. -->
+<!-- Files / directories from the source tree that the local skill already dropped via the zip filter (node_modules, dist, build, lockfiles, minified bundles, .env / .env.local, files > 1 MiB, etc.). Retool may append additional entries. -->
 
 -
 
@@ -75,4 +75,4 @@
 
 ## Phased build order
 
-<!-- TODO: R2 fills this in -->
+<!-- TODO: Retool fills this in -->
