@@ -43,7 +43,7 @@ Read the repo root `package.json` and the top-level directory listing exactly on
 | --------------- | ----------- | ------------- |
 | `lovable-tagger` in `devDependencies` OR `.lovable/` directory exists at repo root | Lovable (legacy Vite) | `retool-import:retool-import-lovable` |
 
-(Future entries — v0, Replit, Bolt — land here as their specializations ship.)
+(Future per-tool specializations land here as they ship.)
 
 ### Delegation
 

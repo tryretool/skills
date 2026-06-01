@@ -9,7 +9,9 @@ Lovable-specialized variant of the [`retool-import`](../retool-import/SKILL.md) 
 
 ## Why this exists
 
-The generic `retool-import` skill is vendor-agnostic by design: it runs a closed-taxonomy discovery scan against an arbitrary React repo. That works for any source tool, but it's wasted work for projects with predictable structure. A legacy-Vite Lovable project ALWAYS has:
+The generic `retool-import` skill is vendor-agnostic by design: it runs a closed-taxonomy discovery scan against an arbitrary React repo. That works for any source tool, but it's wasted work for projects with predictable structure — and Lovable's exports are highly predictable.
+
+Lovable has shipped two project shapes over time. **Legacy Vite** — the original shape, and the one this skill supports — is a client-side React SPA: Vite bundler, `react-router-dom` routing, Supabase backend. The newer shape (TanStack Start, from ~April 2026) is an SSR framework with file-based routing, different enough that it needs its own recipe (see [Scope](#scope)). A legacy-Vite Lovable project ALWAYS has:
 
 - Vite + React + `react-router-dom` for the frontend (entry at `src/main.tsx` → `src/App.tsx`)
 - Tailwind + shadcn primitives under `src/components/ui/`
@@ -21,14 +23,16 @@ Because the shape is known, this skill pre-fills the IMPORT_PLAN.md from structu
 
 ## Scope
 
-This skill handles **legacy Vite Lovable projects** only. Lovable began emitting TanStack Start projects (with `@tanstack/react-start`, `src/app/__root.tsx`, file-based routing, SSR) around April 2026. Those projects have a different entry shape and routing model and are NOT supported here. See [TanStack guard](#tanstack-guard) below for the refuse behavior.
+This is the skill for **Lovable** projects. The Lovable signals (`lovable-tagger` / `.lovable/`) fire for any Lovable export, but the import recipe currently covers the **legacy Vite** shape only — the client-side SPA described above.
+
+Lovable began emitting **TanStack Start** projects (with `@tanstack/react-start`, `src/app/__root.tsx`, file-based routing, SSR) around April 2026. Those have a different entry shape and routing model, so this skill's structural pre-fill doesn't apply. When the skill detects one it doesn't dead-end the user — it explains the gap and offers a no-prep fallback import (see [TanStack guard](#tanstack-guard) and [Unsupported-shape fallback](#unsupported-shape-fallback)).
 
 ## State machine overview
 
 The skill runs these steps sequentially. Each has a fixed input, a fixed output, and a fixed exit condition.
 
 1. Prerequisites check — confirm React repo + MCP tools.
-2. Lovable signal validation — confirm Lovable signals are present; refuse TanStack projects.
+2. Lovable signal validation — confirm Lovable signals are present; offer the no-prep fallback for TanStack / non-standard shapes.
 3. Pre-fill — populate the structural facts table from the known Lovable layout (no discovery scan).
 4. Targeted HITL — one prompt per Supabase edge function, one combined prompt per migration directory, one prompt for Supabase Auth if used.
 5. Produce artifacts — cleaned source tree (shared filter + Lovable-specific drops) plus pre-populated IMPORT_PLAN.md.
@@ -57,24 +61,25 @@ If none of these are present, stop and tell the user: "No Lovable signals detect
 
 ### TanStack guard
 
-If the repo root `package.json` contains `@tanstack/react-start` (in either `dependencies` or `devDependencies`), OR `src/app/__root.tsx` exists, stop with this message:
-
-```
-This project appears to be a Lovable TanStack Start app (post-April 2026
-format). This skill currently supports legacy Vite Lovable projects only —
-TanStack Start has a different entry shape, file-based routing, and SSR
-that need their own transformation recipes.
-
-For now, please run the generic `retool-import` skill, which uses
-vendor-agnostic discovery and will still produce a useful import plan
-(it just won't pre-fill from Lovable structural knowledge).
-```
-
-Do NOT attempt a best-effort import on TanStack projects.
+If the repo root `package.json` contains `@tanstack/react-start` (in either `dependencies` or `devDependencies`), OR `src/app/__root.tsx` exists, this is a Lovable TanStack Start app (post-April 2026 format). The skill's structural pre-fill assumes the legacy-Vite layout and would mis-map this project's files, so do NOT run steps 3–4 on it. Instead, follow the [Unsupported-shape fallback](#unsupported-shape-fallback).
 
 ### React entry exists
 
-Confirm `src/main.tsx` and `src/App.tsx` both exist. If either is missing, this isn't a standard Lovable scaffold — stop and point the user at the generic skill.
+Confirm `src/main.tsx` and `src/App.tsx` both exist. If either is missing, this isn't a standard legacy-Vite Lovable scaffold — follow the [Unsupported-shape fallback](#unsupported-shape-fallback).
+
+### Unsupported-shape fallback
+
+When a project carries Lovable signals but isn't a shape this skill can pre-transform (TanStack Start, or a non-standard scaffold), don't dead-end the user. Tell them this skill doesn't support the app type, then offer:
+
+```
+This skill doesn't support this Lovable app type, so I can't pre-fill the
+import plan. Want me to import it anyway, without skill preparation? I'll
+hand the source tree straight to Retool's React app import and let the
+Retool agent attempt the transformation itself — no structural pre-fill,
+no guided resource mapping. Reply "import anyway" to try, or stop here.
+```
+
+If the user replies "import anyway": skip steps 3–4. Produce the cleaned source tree using the SHARED zip filter only (step 5a, *without* the Lovable-specific drops — those assume the legacy-Vite layout), then call `retool_submit_prepared_import` (step 6) with that tree and a minimal IMPORT_PLAN.md whose Overview states the import is unprepared and the Retool agent owns all transformation. Otherwise, stop.
 
 ## 3. Pre-fill from structural facts
 
@@ -355,7 +360,7 @@ If the tool call fails, surface the error verbatim and stop. Do NOT retry silent
 - Never read `.env` or `.env.local`. Only `.env.example` is safe.
 - Never auto-apply `supabase/migrations/*.sql` against any database — always surface the SQL and tell the user to apply manually.
 - Never auto-resolve a Retool resource pick without HITL, even when there's exactly one candidate of the matching type.
-- TanStack Start Lovable projects are out of scope. Refuse with the message in [TanStack guard](#tanstack-guard). Do NOT attempt a best-effort import.
+- TanStack Start Lovable projects are out of scope for the pre-filled recipe. Do NOT run the structural pre-fill (steps 3–4) on them. Offer the [Unsupported-shape fallback](#unsupported-shape-fallback) instead of dead-ending the user.
 - If a Supabase edge function's gateway URL doesn't match the known mapping table, classify the inferred category as `unknown` and surface in open questions — do NOT force-fit it into a category it doesn't belong to.
 - Never write outside the user's repo. The skill's only outputs are the in-terminal HITL prompts and the `retool_submit_prepared_import` MCP tool call.
 
