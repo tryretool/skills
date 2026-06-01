@@ -9,15 +9,16 @@ This skill prepares a user's app for being imported into Retool via MCP. The ski
 
 ## State machine overview
 
-The skill runs six phases sequentially. Each phase has a fixed input, a fixed output, and a fixed exit condition. Do NOT skip phases. Do NOT pause for user input outside of Phase 4 (HITL).
+The skill runs these phases sequentially. Each phase has a fixed input, a fixed output, and a fixed exit condition. Do NOT skip phases — except that Phase 0 may delegate to a sibling skill, in which case this skill stops entirely and the sibling owns the rest of the flow. Do NOT pause for user input outside of Phase 4 (HITL).
 
 1. Prerequisites check — confirm we are in a React repo and that the required MCP tools are available.
-2. Phase 1 — Recon. Read a tight set of files and emit a structured summary of the workspace shape.
-3. Phase 2 — Discovery scan. Fan out vendor-agnostic discovery subagents against the directory tree.
-4. Phase 3 — Resource matching. For each discovered service, call `retool_list_resources` for compatible types and rank candidates.
-5. Phase 4 — HITL. One prompt per distinct service. User picks a resource by number or `USE_MOCK_DATA`. Summarize the resolutions back for final confirm.
-6. Phase 5 — Produce artifacts. Walk the repo with the zip filter to build a cleaned source tree, and fill in `IMPORT_PLAN.template.md`.
-7. Phase 6 — Handoff. Call `retool_submit_prepared_import` with the cleaned tree and partial plan. Stream progress. Surface the editor URL.
+2. Phase 0 — Source-tool detection. Look for known source-tool signals (e.g. `lovable-tagger`, `.lovable/`). On a positive match, delegate to the matching sibling skill via the Skill tool and STOP. On no match, proceed to Phase 1.
+3. Phase 1 — Recon. Read a tight set of files and emit a structured summary of the workspace shape.
+4. Phase 2 — Discovery scan. Fan out vendor-agnostic discovery subagents against the directory tree.
+5. Phase 3 — Resource matching. For each discovered service, call `retool_list_resources` for compatible types and rank candidates.
+6. Phase 4 — HITL. One prompt per distinct service. User picks a resource by number or `USE_MOCK_DATA`. Summarize the resolutions back for final confirm.
+7. Phase 5 — Produce artifacts. Walk the repo with the zip filter to build a cleaned source tree, and fill in `IMPORT_PLAN.template.md`.
+8. Phase 6 — Handoff. Call `retool_submit_prepared_import` with the cleaned tree and partial plan. Stream progress. Surface the editor URL.
 
 ## Prerequisites check
 
@@ -26,7 +27,39 @@ Before Phase 1, verify two things and stop with a clear error if either fails:
 1. **React repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps.
 2. **Required MCP tools.** The skill needs `retool_list_resources` (existing) and `retool_submit_prepared_import` (new, gated by the `mcpServerRetoolImportEnabled` flag). If `retool_submit_prepared_import` is not visible as an MCP tool, stop and tell the user: "The retool-import skill requires `retool_submit_prepared_import`, which is gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
 
-If both checks pass, proceed to Phase 1.
+If both checks pass, proceed to Phase 0.
+
+## Phase 0 — Source-tool detection
+
+Before the vendor-agnostic discovery scan runs, do a quick structural check for known source-tool conventions. If the project matches one of the supported per-tool specializations, delegate to the matching sibling skill via the Skill tool and STOP — the sibling owns the rest of the flow.
+
+This is the ONLY place in this skill where vendor-specific knowledge is encoded. Detection looks at *signal files* (a known package name in `package.json`, a known directory) — it does NOT classify code behavior. Phases 1–4 below remain strictly vendor-agnostic.
+
+### Detection signals
+
+Read the repo root `package.json` and the top-level directory listing exactly once. Check signals in this order — first match wins:
+
+| Signal (any of) | Source tool | Sibling skill |
+| --------------- | ----------- | ------------- |
+| `lovable-tagger` in `devDependencies` OR `.lovable/` directory exists at repo root | Lovable (legacy Vite) | `retool-import:retool-import-lovable` |
+
+(Future per-tool specializations land here as they ship.)
+
+### Delegation
+
+On a positive match:
+
+1. Tell the user briefly: "Detected this is a `<source tool>` project. Switching to the `<sibling skill name>` specialization for a more accurate import."
+2. Invoke the matching sibling skill via the Skill tool. The sibling will run its own validation and proceed.
+3. STOP. Do NOT continue with Phase 1+ in this skill.
+
+On no match, proceed to Phase 1 with the generic vendor-agnostic flow.
+
+### Why detection is structural
+
+The generic discovery in Phases 1–4 intentionally avoids vendor-specific code paths so it works on any React app — Supabase, Firebase, Prisma, hand-rolled REST, etc. Phase 0 is the one exception, and it stays narrow on purpose: it only looks at signal files whose presence is a near-deterministic fingerprint of the source tool (e.g. `lovable-tagger` is only emitted by Lovable's Vite scaffold). This means Phase 0 cannot mistakenly route a vendor-agnostic React app to a per-tool skill.
+
+If you find yourself wanting to add a Phase 0 signal that requires reading code behavior to disambiguate, push the rule into the matching sibling skill's own validation instead — keep Phase 0 here as a fast signal-file scan only.
 
 ## Phase 1 — Recon
 
@@ -256,7 +289,7 @@ If the tool call fails, surface the error verbatim and stop. Do NOT retry silent
 - Never read `.env` or `.env.local`. Only `.env.example` is safe.
 - If discovery finds a service the user did not acknowledge in Phase 4, do NOT silently skip — surface it as an open question in the plan.
 - If `retool_submit_prepared_import` is not available as an MCP tool, stop at Phase 5 and tell the user to enable `mcpServerRetoolImportEnabled` for their org.
-- Discovery is LLM-driven against the closed category taxonomy. Vendor is a free-text string. Do NOT add vendor-specific code paths — the same skill must work on Supabase, Firebase, Prisma, hand-rolled REST, etc.
+- Phase 2 (discovery) is LLM-driven against the closed category taxonomy. Vendor is a free-text string. Do NOT add vendor-specific code paths in Phase 2 — the same discovery pass must work on Supabase, Firebase, Prisma, hand-rolled REST, etc. Phase 0 is the only place vendor-specific knowledge is encoded, and it operates on signal files alone (never on code behavior).
 
 ## Summary for the user
 
