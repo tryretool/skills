@@ -5,7 +5,7 @@ description: Use this skill when the user wants to import an existing React appl
 
 # retool-import
 
-This skill prepares a user's app for being imported into Retool via MCP. The skill runs a six-phase local state machine and hands a prepared import plan to Retool's React app sandbox agent via the `retool_submit_prepared_import` MCP tool.
+This skill prepares a user's app for being imported into Retool via MCP. The skill runs a six-phase local state machine and hands a prepared import plan to Retool's React app sandbox agent via the two-step `retool_start_prepared_import` / `retool_finalize_prepared_import` MCP flow, falling back to the inline `retool_submit_prepared_import` tool only if that flow errors.
 
 ## State machine overview
 
@@ -18,14 +18,14 @@ The skill runs these phases sequentially. Each phase has a fixed input, a fixed 
 5. Phase 3 — Resource matching. For each discovered service, call `retool_list_resources` for compatible types and rank candidates.
 6. Phase 4 — HITL. One prompt per distinct service. User picks a resource by number or `USE_MOCK_DATA`. Summarize the resolutions back for final confirm.
 7. Phase 5 — Produce artifacts. Walk the repo with the zip filter to build a cleaned source tree, and fill in `IMPORT_PLAN.template.md`.
-8. Phase 6 — Handoff. Call `retool_submit_prepared_import` with the cleaned tree and partial plan. Stream progress. Surface the editor URL.
+8. Phase 6 — Handoff. `retool_start_prepared_import` with the plan, PUT a zip of the cleaned tree to the returned upload URL, then `retool_finalize_prepared_import` — falling back to inline `retool_submit_prepared_import` only if a step errors. Stream progress. Surface the editor URL.
 
 ## Prerequisites check
 
 Before Phase 1, verify two things and stop with a clear error if either fails:
 
 1. **React repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps.
-2. **Required MCP tools.** The skill needs `retool_list_resources` (existing) and `retool_submit_prepared_import` (new, gated by the `mcpServerRetoolImportEnabled` flag). If `retool_submit_prepared_import` is not visible as an MCP tool, stop and tell the user: "The retool-import skill requires `retool_submit_prepared_import`, which is gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
+2. **Required MCP tools.** The skill needs `retool_list_resources` (existing) plus the import tools gated by the `mcpServerRetoolImportEnabled` flag. The preferred handoff uses `retool_start_prepared_import` + `retool_finalize_prepared_import`; if those aren't visible but `retool_submit_prepared_import` is, the skill uses the inline submit instead (see Phase 6). If none of the import tools are visible, stop and tell the user: "The retool-import skill requires the Retool import tools, gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
 
 If both checks pass, proceed to Phase 0.
 
@@ -239,7 +239,7 @@ Walk the repo from the root and apply the filter from `references/filter-constan
 6. Stop and warn the user if the file count exceeds `APP_IMPORT_MAX_FILE_COUNT` (5,000) or the aggregate size exceeds `APP_IMPORT_MAX_TOTAL_BYTES` (50 MiB). Surface the offending paths or the count and ask the user how to proceed.
 7. For surviving files, read the bytes only if `isTextFile(path)` returns true. Non-text files (images, etc.) are recorded by path but with empty content unless they fit a text extension.
 
-Build a `Record<string, { code: string }>` keyed by repo-relative path. This is the payload for `retool_submit_prepared_import`.
+Build a `Record<string, { code: string }>` keyed by repo-relative path. This is the cleaned source tree — zipped and uploaded in the preferred two-step handoff, or passed as the inline `files` payload in the submit fallback (Phase 6).
 
 ### 5b. Partial IMPORT_PLAN.md
 
@@ -265,30 +265,34 @@ Proceed to Phase 6 once both artifacts are built.
 
 ## Phase 6 — Handoff
 
-Call `retool_submit_prepared_import` with:
+Hand the prepared import to Retool's React app sandbox agent. **Prefer the two-step flow**; fall back to the inline submit only if a step of the two-step flow errors.
 
-```
-{
-  files: <the cleaned source tree from 5a>,
-  importPlan: <the IMPORT_PLAN.md content from 5b>,
-  targetAppId: <optional — ask the user "Import into an existing app? (paste app ID, or press Enter for a new app)" before calling>
-}
-```
+### Preferred — two-step flow
 
-Stream progress notifications back to the user as they arrive from the tool call. When the tool returns, surface the editor URL clearly:
+1. Call `retool_start_prepared_import` with `{ importPlan: <the IMPORT_PLAN.md content from 5b>, targetAppId: <optional — ask "Import into an existing app? (paste app ID, or press Enter for a new app)" first> }`. It provisions the sandbox and returns `importId` plus a time-limited `upload.url` and `upload.token`.
+
+2. Zip the cleaned source tree from 5a (paths repo-relative, no leading slash) and PUT it to `upload.url` with `Authorization: Bearer <upload.token>` and `Content-Type: application/zip`. On a 503 the sandbox dev server is still starting — wait ~2s and retry.
+
+3. After the PUT succeeds, call `retool_finalize_prepared_import` with the returned `importId` to confirm the upload and surface the editor URL.
+
+### Fallback — inline submit (only on a two-step error)
+
+If `retool_start_prepared_import` is unavailable, the upload PUT keeps failing after the 503 retry, or `retool_finalize_prepared_import` errors, recover by calling `retool_submit_prepared_import` once with the files inlined: `{ files: <the cleaned source tree from 5a>, importPlan: <the IMPORT_PLAN.md content from 5b>, targetAppId: <same optional app id> }`. Do NOT use the inline submit as the first attempt — it's the recovery path for when the two-step file transfer fails.
+
+When the handoff returns (from finalize or the submit fallback), stream progress and surface the editor URL clearly:
 
 ```
 Done. Your Retool app is at: <editor URL>
 ```
 
-If the tool call fails, surface the error verbatim and stop. Do NOT retry silently.
+Surface any terminal error verbatim and stop — an error from the submit fallback, or a two-step error the fallback can't recover. Do NOT retry silently beyond the documented 503 upload retry.
 
 ## Hard rules / safety
 
-- Never write outside the user's repo without asking. The skill's only outputs are the in-terminal prompts and the `retool_submit_prepared_import` MCP tool call.
+- Never write outside the user's repo without asking. The skill's only outputs are the in-terminal prompts and the import handoff (the `retool_start_prepared_import` / upload PUT / `retool_finalize_prepared_import` flow, or the `retool_submit_prepared_import` fallback).
 - Never read `.env` or `.env.local`. Only `.env.example` is safe.
 - If discovery finds a service the user did not acknowledge in Phase 4, do NOT silently skip — surface it as an open question in the plan.
-- If `retool_submit_prepared_import` is not available as an MCP tool, stop at Phase 5 and tell the user to enable `mcpServerRetoolImportEnabled` for their org.
+- If none of the import tools (`retool_start_prepared_import`, `retool_finalize_prepared_import`, `retool_submit_prepared_import`) are available as MCP tools, stop at Phase 5 and tell the user to enable `mcpServerRetoolImportEnabled` for their org.
 - Phase 2 (discovery) is LLM-driven against the closed category taxonomy. Vendor is a free-text string. Do NOT add vendor-specific code paths in Phase 2 — the same discovery pass must work on Supabase, Firebase, Prisma, hand-rolled REST, etc. Phase 0 is the only place vendor-specific knowledge is encoded, and it operates on signal files alone (never on code behavior).
 
 ## Summary for the user
