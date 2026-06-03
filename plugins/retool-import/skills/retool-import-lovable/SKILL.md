@@ -1,6 +1,6 @@
 ---
 name: retool-import-lovable
-description: Use this skill when the user wants to import a Lovable-generated React app (legacy Vite + Supabase) into Retool as a Retool React app. Detected by `lovable-tagger` in package.json or a `.lovable/` directory at the repo root. The skill skips vendor-agnostic discovery because Lovable's structure (Vite + react-router-dom + Supabase edge functions calling Lovable's connector gateway) is known up front; it pre-fills the import plan from structural facts, asks targeted HITL only for the choices that genuinely need a human (which Retool resource backs each Supabase edge function and migration), and hands a prepared import plan to Retool's React app sandbox agent via the `retool_submit_prepared_import` MCP tool.
+description: Use this skill when the user wants to import a Lovable-generated React app (legacy Vite + Supabase) into Retool as a Retool React app. Detected by `lovable-tagger` in package.json or a `.lovable/` directory at the repo root. The skill skips vendor-agnostic discovery because Lovable's structure (Vite + react-router-dom + Supabase edge functions calling Lovable's connector gateway) is known up front; it pre-fills the import plan from structural facts, asks targeted HITL only for the choices that genuinely need a human (which Retool resource backs each Supabase edge function and migration), and hands a prepared import plan to Retool's React app sandbox agent via the two-step `retool_start_prepared_import` / `retool_finalize_prepared_import` MCP flow, falling back to the inline `retool_submit_prepared_import` tool only if that flow errors.
 ---
 
 # retool-import-lovable
@@ -36,7 +36,7 @@ The skill runs these steps sequentially. Each has a fixed input, a fixed output,
 3. Pre-fill — populate the structural facts table from the known Lovable layout (no discovery scan).
 4. Targeted HITL — one prompt per Supabase edge function, one combined prompt per migration directory, one prompt for Supabase Auth if used.
 5. Produce artifacts — cleaned source tree (shared filter + Lovable-specific drops) plus pre-populated IMPORT_PLAN.md.
-6. Handoff — call `retool_submit_prepared_import` with the cleaned tree and plan.
+6. Handoff — `retool_start_prepared_import` with the plan, PUT a zip of the cleaned tree to the returned upload URL, then `retool_finalize_prepared_import` — falling back to inline `retool_submit_prepared_import` only if a step errors.
 
 Do NOT skip steps. Do NOT pause for user input outside step 4.
 
@@ -45,7 +45,7 @@ Do NOT skip steps. Do NOT pause for user input outside step 4.
 Same as the generic skill. Verify and stop with a clear error if either fails:
 
 1. **React repo.** Read `package.json` at the repo root. The `dependencies` (or `devDependencies`) must include `react`. If not, stop and tell the user this skill targets React apps.
-2. **Required MCP tools.** `retool_list_resources` and `retool_submit_prepared_import` must both be visible. If `retool_submit_prepared_import` is missing, stop with: "The retool-import-lovable skill requires `retool_submit_prepared_import`, which is gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
+2. **Required MCP tools.** `retool_list_resources` plus the import tools gated by the `mcpServerRetoolImportEnabled` flag. The preferred handoff uses `retool_start_prepared_import` + `retool_finalize_prepared_import`; if those aren't visible but `retool_submit_prepared_import` is, the skill uses the inline submit instead (see [Handoff](#6-handoff)). If none of the import tools are visible, stop with: "The retool-import-lovable skill requires the Retool import tools, gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
 
 ## 2. Lovable signal validation
 
@@ -79,7 +79,7 @@ Retool agent attempt the transformation itself — no structural pre-fill,
 no guided resource mapping. Reply "import anyway" to try, or stop here.
 ```
 
-If the user replies "import anyway": skip steps 3–4. Produce the cleaned source tree using the SHARED zip filter only (step 5a, *without* the Lovable-specific drops — those assume the legacy-Vite layout), then call `retool_submit_prepared_import` (step 6) with that tree and a minimal IMPORT_PLAN.md whose Overview states the import is unprepared and the Retool agent owns all transformation. Otherwise, stop.
+If the user replies "import anyway": skip steps 3–4. Produce the cleaned source tree using the SHARED zip filter only (step 5a, *without* the Lovable-specific drops — those assume the legacy-Vite layout), then run the step 6 handoff (preferred two-step flow, inline submit as fallback) with that tree and a minimal IMPORT_PLAN.md whose Overview states the import is unprepared and the Retool agent owns all transformation. Otherwise, stop.
 
 ## 3. Pre-fill from structural facts
 
@@ -261,7 +261,7 @@ In addition to the shared filter, drop these Lovable-specific paths (always):
 
 Stop and warn the user if the file count exceeds 5,000 or the aggregate size exceeds 50 MiB. Surface the offending paths and ask how to proceed.
 
-Build a `Record<string, { code: string }>` keyed by repo-relative path. This is the `files` payload for `retool_submit_prepared_import`.
+Build a `Record<string, { code: string }>` keyed by repo-relative path. This is the cleaned source tree — zipped and uploaded in the preferred two-step handoff, or passed as the inline `files` payload in the submit fallback (step 6).
 
 ### 5b. IMPORT_PLAN.md
 
@@ -337,23 +337,27 @@ Above the table, place `<!-- partial: rows populated by retool-import-lovable; c
 
 ## 6. Handoff
 
-Call `retool_submit_prepared_import` with:
+Hand the prepared import to Retool's React app sandbox agent. **Prefer the two-step flow**; fall back to the inline submit only if a step of the two-step flow errors.
 
-```
-{
-  files: <cleaned source tree from step 5a>,
-  importPlan: <IMPORT_PLAN.md content from step 5b>,
-  targetAppId: <optional — ask the user "Import into an existing app? (paste app ID, or press Enter for a new app)" before calling>
-}
-```
+### Preferred — two-step flow
 
-Stream progress notifications as they arrive. When the tool returns, surface the editor URL:
+1. Call `retool_start_prepared_import` with `{ importPlan: <IMPORT_PLAN.md content from step 5b>, targetAppId: <optional — ask "Import into an existing app? (paste app ID, or press Enter for a new app)" first> }`. It provisions the sandbox and returns `importId` plus a time-limited `upload.url` and `upload.token`.
+
+2. Zip the cleaned source tree from step 5a (paths repo-relative, no leading slash) and PUT it to `upload.url` with `Authorization: Bearer <upload.token>` and `Content-Type: application/zip`. On a 503 the sandbox dev server is still starting — wait ~2s and retry.
+
+3. After the PUT succeeds, call `retool_finalize_prepared_import` with the returned `importId` to confirm the upload and surface the editor URL.
+
+### Fallback — inline submit (only on a two-step error)
+
+If `retool_start_prepared_import` is unavailable, the upload PUT keeps failing after the 503 retry, or `retool_finalize_prepared_import` errors, recover by calling `retool_submit_prepared_import` once with the files inlined: `{ files: <cleaned source tree from step 5a>, importPlan: <IMPORT_PLAN.md content from step 5b>, targetAppId: <same optional app id> }`. Do NOT use the inline submit as the first attempt — it's the recovery path for when the two-step file transfer fails.
+
+When the handoff returns (from finalize or the submit fallback), stream progress and surface the editor URL:
 
 ```
 Done. Your Retool app is at: <editor URL>
 ```
 
-If the tool call fails, surface the error verbatim and stop. Do NOT retry silently.
+Surface any terminal error verbatim and stop — an error from the submit fallback, or a two-step error the fallback can't recover. Do NOT retry silently beyond the documented 503 upload retry.
 
 ## Hard rules / safety
 
@@ -362,7 +366,7 @@ If the tool call fails, surface the error verbatim and stop. Do NOT retry silent
 - Never auto-resolve a Retool resource pick without HITL, even when there's exactly one candidate of the matching type.
 - TanStack Start Lovable projects are out of scope for the pre-filled recipe. Do NOT run the structural pre-fill (steps 3–4) on them. Offer the [Unsupported-shape fallback](#unsupported-shape-fallback) instead of dead-ending the user.
 - If a Supabase edge function's gateway URL doesn't match the known mapping table, classify the inferred category as `unknown` and surface in open questions — do NOT force-fit it into a category it doesn't belong to.
-- Never write outside the user's repo. The skill's only outputs are the in-terminal HITL prompts and the `retool_submit_prepared_import` MCP tool call.
+- Never write outside the user's repo. The skill's only outputs are the in-terminal HITL prompts and the import handoff (the `retool_start_prepared_import` / upload PUT / `retool_finalize_prepared_import` flow, or the `retool_submit_prepared_import` fallback).
 
 ## Summary for the user
 
