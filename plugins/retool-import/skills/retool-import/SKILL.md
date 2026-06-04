@@ -9,25 +9,63 @@ This skill prepares a user's app for being imported into Retool via MCP. The ski
 
 ## State machine overview
 
-The skill runs these phases sequentially. Each phase has a fixed input, a fixed output, and a fixed exit condition. Do NOT skip phases — except that Phase 0 may delegate to a sibling skill, in which case this skill stops entirely and the sibling owns the rest of the flow. Do NOT pause for user input outside of Phase 4 (HITL).
+The skill runs these phases sequentially. Each phase has a fixed input, a fixed output, and a fixed exit condition. Do NOT skip phases — except that Phase 0 may delegate to a sibling skill, in which case this skill stops entirely and the sibling owns the rest of the flow. Do NOT pause for user input outside of Phase 4 (HITL) and the compatibility gate's soft-no confirm.
 
 1. Prerequisites check — confirm we are in a React repo and that the required MCP tools are available.
-2. Phase 0 — Source-tool detection. Look for known source-tool signals (e.g. `lovable-tagger`, `.lovable/`). On a positive match, delegate to the matching sibling skill via the Skill tool and STOP. On no match, proceed to Phase 1.
-3. Phase 1 — Recon. Read a tight set of files and emit a structured summary of the workspace shape.
-4. Phase 2 — Discovery scan. Fan out vendor-agnostic discovery subagents against the directory tree.
-5. Phase 3 — Resource matching. For each discovered service, call `retool_list_resources` for compatible types and rank candidates.
-6. Phase 4 — HITL. One prompt per distinct service. User picks a resource by number or `USE_MOCK_DATA`. Summarize the resolutions back for final confirm.
-7. Phase 5 — Produce artifacts. Walk the repo with the zip filter to build a cleaned source tree, and fill in `IMPORT_PLAN.template.md`.
-8. Phase 6 — Handoff. `retool_start_prepared_import` with the plan, PUT a zip of the cleaned tree to the returned upload URL, then `retool_finalize_prepared_import` — falling back to inline `retool_submit_prepared_import` only if a step errors. Stream progress. Surface the editor URL.
+2. Compatibility gate — run the deterministic `import-policy` classifier. A `hard_no` app type is blocked locally before any work is done; `soft_no` (Next.js) asks the user to confirm a best-effort import; `supported` proceeds.
+3. Phase 0 — Source-tool detection. Look for known source-tool signals (e.g. `lovable-tagger`, `.lovable/`). On a positive match, delegate to the matching sibling skill via the Skill tool and STOP. On no match, proceed to Phase 1.
+4. Phase 1 — Recon. Read a tight set of files and emit a structured summary of the workspace shape.
+5. Phase 2 — Discovery scan. Fan out vendor-agnostic discovery subagents against the directory tree.
+6. Phase 3 — Resource matching. For each discovered service, call `retool_list_resources` for compatible types and rank candidates.
+7. Phase 4 — HITL. One prompt per distinct service. User picks a resource by number or `USE_MOCK_DATA`. Summarize the resolutions back for final confirm.
+8. Phase 5 — Produce artifacts. Walk the repo with the zip filter to build a cleaned source tree, and fill in `IMPORT_PLAN.template.md`.
+9. Phase 6 — Handoff. `retool_start_prepared_import` with the plan, PUT a zip of the cleaned tree to the returned upload URL, then `retool_finalize_prepared_import` — falling back to inline `retool_submit_prepared_import` only if a step errors. Stream progress. Surface the editor URL.
 
 ## Prerequisites check
 
 Before Phase 1, verify two things and stop with a clear error if either fails:
 
-1. **React repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps.
+1. **JS/React-family repo.** Read `package.json` at the repo root. If absent, look for a single clearly-identifiable client subdirectory (`packages/<x>/package.json` or `apps/<x>/package.json`) and use that as the client root. In either case, the `dependencies` (or `devDependencies`) must include one of: `react`, `react-dom`, `next`, `vite`, `gatsby`, `expo`. If none is present, stop and tell the user this skill targets React apps. This check only confirms the repo is a JS frontend project at all — it is intentionally permissive. Whether the specific app *type* is importable (e.g. `next`/`gatsby`/`expo` are NOT supported targets) is decided authoritatively by the Compatibility gate below, not here.
 2. **Required MCP tools.** The skill needs `retool_list_resources` (existing) plus the import tools gated by the `mcpServerRetoolImportEnabled` flag. The preferred handoff uses `retool_start_prepared_import` + `retool_finalize_prepared_import`; if those aren't visible but `retool_submit_prepared_import` is, the skill uses the inline submit instead (see Phase 6). If none of the import tools are visible, stop and tell the user: "The retool-import skill requires the Retool import tools, gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
 
-If both checks pass, proceed to Phase 0.
+If both checks pass, proceed to the Compatibility gate.
+
+## Compatibility gate
+
+Retool's React app import supports a specific set of app types. This gate runs the SAME deterministic policy as Retool's browser-based import (the pre-agent classifier in `appImportClassifier/`), but LOCALLY — so an unsupported app type is blocked here, before any discovery work or any handoff to Retool's R2 agent. The policy is mirrored in `references/import-policy.mjs`; keep that file in sync with the upstream `rules.ts` / `classifier.ts`.
+
+Run the classifier against the client root (the directory whose `package.json` you found in the prerequisites check — pass the repo root for a single-package repo):
+
+```
+node <this skill's dir>/../../references/import-policy.mjs <client-root-absolute-path>
+```
+
+It prints one line of JSON: `{ "verdict": "hard_no" | "soft_no" | "supported", "identifiedAs": "<tech>", "reasons": [...] }`. The classifier looks ONLY at manifest files (`package.json` deps, `app.json` shape, config-file presence) — never at source code — and ignores `node_modules`, build output, etc. Act on `verdict`:
+
+- **`hard_no`** — STOP. The app type is not supported. Tell the user verbatim, substituting `identifiedAs`:
+
+  ```
+  Your app uses <identifiedAs>, which isn't supported by Retool's React app import yet.
+  See supported frameworks: https://docs.retool.com/build/apps/guides/import
+  ```
+
+  Do NOT run discovery, build artifacts, or call any import tool. The skill ends here.
+
+- **`soft_no`** — this is the Next.js carve-out. Best-effort is possible but the result may need cleanup. Prompt the user once and WAIT for an answer:
+
+  ```
+  <identifiedAs> imports are not supported.
+  We're still learning how to handle <identifiedAs>. We'll attempt the build,
+  but the result may need some cleanup.
+
+  Attempt a best-effort import anyway? (y/n)
+  ```
+
+  On `n` (or anything not affirmative), STOP — no discovery, no handoff. On `y`, proceed to Phase 0, and in Phase 5 record under **Open questions / known gaps**: "Best-effort import of a `<identifiedAs>` app the user explicitly approved; the result may need cleanup."
+
+- **`supported`** — proceed to Phase 0 with no prompt.
+
+If `node` is unavailable or the script errors (non-zero exit), do NOT silently skip the gate: tell the user the local compatibility check couldn't run, and proceed only if they confirm — Retool's R2 agent will re-validate compatibility on its side as a fallback (its `evaluate_app_compatibility` tool), so an unsupported app may still be rejected after handoff.
 
 ## Phase 0 — Source-tool detection
 
@@ -291,10 +329,11 @@ Surface any terminal error verbatim and stop — an error from the submit fallba
 
 - Never write outside the user's repo without asking. The skill's only outputs are the in-terminal prompts and the import handoff (the `retool_start_prepared_import` / upload PUT / `retool_finalize_prepared_import` flow, or the `retool_submit_prepared_import` fallback).
 - Never read `.env` or `.env.local`. Only `.env.example` is safe.
+- The Compatibility gate is authoritative on app-type support and runs BEFORE any discovery or handoff. Never bypass a `hard_no` verdict, and never hand a `soft_no` app to Retool without the user's explicit best-effort confirm. `references/import-policy.mjs` mirrors Retool's upstream `appImportClassifier` (`rules.ts` / `classifier.ts`) — when the upstream policy changes, update that file rather than editing the rules inline in this skill.
 - If discovery finds a service the user did not acknowledge in Phase 4, do NOT silently skip — surface it as an open question in the plan.
 - If none of the import tools (`retool_start_prepared_import`, `retool_finalize_prepared_import`, `retool_submit_prepared_import`) are available as MCP tools, stop at Phase 5 and tell the user to enable `mcpServerRetoolImportEnabled` for their org.
 - Phase 2 (discovery) is LLM-driven against the closed category taxonomy. Vendor is a free-text string. Do NOT add vendor-specific code paths in Phase 2 — the same discovery pass must work on Supabase, Firebase, Prisma, hand-rolled REST, etc. Phase 0 is the only place vendor-specific knowledge is encoded, and it operates on signal files alone (never on code behavior).
 
 ## Summary for the user
 
-This skill recons your React repo, fans out parallel discovery subagents to find every external service your code talks to (databases, auth, storage, realtime, HTTP APIs, payments, etc.), looks up matching Retool resources for each one, asks you to pick the right resource (or `USE_MOCK_DATA`) per service in the terminal, packages your source tree with secrets and large files stripped out, builds a partially-populated `IMPORT_PLAN.md`, and hands it all to Retool's React app sandbox agent. Retool finishes classification and execution; you end up with a working Retool app whose editor URL is printed at the end.
+This skill first runs a deterministic compatibility gate that blocks app types Retool can't import (mobile, non-JS backends, non-React frontends) locally before any work happens — Next.js gets a best-effort confirm. For a supported app it then recons your React repo, fans out parallel discovery subagents to find every external service your code talks to (databases, auth, storage, realtime, HTTP APIs, payments, etc.), looks up matching Retool resources for each one, asks you to pick the right resource (or `USE_MOCK_DATA`) per service in the terminal, packages your source tree with secrets and large files stripped out, builds a partially-populated `IMPORT_PLAN.md`, and hands it all to Retool's React app sandbox agent. Retool finishes classification and execution; you end up with a working Retool app whose editor URL is printed at the end.
