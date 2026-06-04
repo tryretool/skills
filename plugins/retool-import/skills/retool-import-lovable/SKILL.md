@@ -31,14 +31,14 @@ Lovable began emitting **TanStack Start** projects (with `@tanstack/react-start`
 
 The skill runs these steps sequentially. Each has a fixed input, a fixed output, and a fixed exit condition.
 
-1. Prerequisites check — confirm React repo + MCP tools.
+1. Prerequisites check — confirm React repo + MCP tools, then run the deterministic compatibility gate (a `hard_no` app type is blocked locally; Next.js gets a best-effort confirm).
 2. Lovable signal validation — confirm Lovable signals are present; offer the no-prep fallback for TanStack / non-standard shapes.
 3. Pre-fill — populate the structural facts table from the known Lovable layout (no discovery scan).
 4. Targeted HITL — one prompt per Supabase edge function, one combined prompt per migration directory, one prompt for Supabase Auth if used.
 5. Produce artifacts — cleaned source tree (shared filter + Lovable-specific drops) plus pre-populated IMPORT_PLAN.md.
 6. Handoff — `retool_start_prepared_import` with the plan, PUT a zip of the cleaned tree to the returned upload URL, then `retool_finalize_prepared_import` — falling back to inline `retool_submit_prepared_import` only if a step errors.
 
-Do NOT skip steps. Do NOT pause for user input outside step 4.
+Do NOT skip steps. Do NOT pause for user input outside step 4 and the compatibility gate's soft-no confirm.
 
 ## 1. Prerequisites check
 
@@ -46,6 +46,24 @@ Same as the generic skill. Verify and stop with a clear error if either fails:
 
 1. **React repo.** Read `package.json` at the repo root. The `dependencies` (or `devDependencies`) must include `react`. If not, stop and tell the user this skill targets React apps.
 2. **Required MCP tools.** `retool_list_resources` plus the import tools gated by the `mcpServerRetoolImportEnabled` flag. The preferred handoff uses `retool_start_prepared_import` + `retool_finalize_prepared_import`; if those aren't visible but `retool_submit_prepared_import` is, the skill uses the inline submit instead (see [Handoff](#6-handoff)). If none of the import tools are visible, stop with: "The retool-import-lovable skill requires the Retool import tools, gated by the `mcpServerRetoolImportEnabled` flag. Ask your Retool admin to enable that flag for your org."
+
+### Compatibility gate
+
+After the two checks above pass, run the SAME deterministic compatibility gate as the generic `retool-import` skill, before signal validation or any handoff. It enforces Retool's app-type policy LOCALLY using the shared `references/import-policy.mjs` mirror of Retool's `appImportClassifier` (`rules.ts` / `classifier.ts`).
+
+A legacy-Vite Lovable project (Vite + React + Supabase) is `supported` and passes instantly, so this gate is mostly a guardrail — but run it anyway, since this skill is directly invocable and may be pointed at a repo that isn't actually a supported shape.
+
+```
+node <this skill's dir>/../../references/import-policy.mjs <client-root-absolute-path>
+```
+
+It prints `{ "verdict": "hard_no" | "soft_no" | "supported", "identifiedAs": "<tech>", "reasons": [...] }` from manifest files only (never source code). Act on `verdict`:
+
+- **`hard_no`** — STOP. Tell the user verbatim, substituting `identifiedAs`: "Your app uses `<identifiedAs>`, which isn't supported by Retool's React app import yet. See supported frameworks: https://docs.retool.com/build/apps/guides/import". Do NOT run any further step.
+- **`soft_no`** (Next.js carve-out) — prompt once and WAIT: "`<identifiedAs>` imports are not supported. We'll attempt the build, but the result may need some cleanup. Attempt a best-effort import anyway? (y/n)". On anything not affirmative, STOP. On `y`, continue and note the best-effort approval under **Open questions / known gaps** in step 5b. (A genuine Lovable project never hits this branch.)
+- **`supported`** — continue to signal validation with no prompt.
+
+This gate is about Retool's app-type policy (mobile / non-JS backend / non-React frontend → blocked). It is orthogonal to the [TanStack guard](#tanstack-guard) below, which is about whether *this skill's structural pre-fill* applies. A TanStack Lovable app passes the gate (`supported`) but still routes to the [Unsupported-shape fallback](#unsupported-shape-fallback). If `node` is unavailable or the script errors, tell the user the local check couldn't run and proceed only on their confirm — Retool's R2 agent re-validates compatibility as a fallback.
 
 ## 2. Lovable signal validation
 
@@ -361,6 +379,7 @@ Surface any terminal error verbatim and stop — an error from the submit fallba
 
 ## Hard rules / safety
 
+- Run the [Compatibility gate](#compatibility-gate) before any other step. Never bypass a `hard_no` verdict, and never hand a `soft_no` app to Retool without the user's explicit best-effort confirm. The gate (app-type policy) is separate from the TanStack guard (pre-fill applicability) — both can apply. The policy lives in the shared `references/import-policy.mjs`; keep it in sync with Retool's upstream `appImportClassifier` rather than editing rules inline.
 - Never read `.env` or `.env.local`. Only `.env.example` is safe.
 - Never auto-apply `supabase/migrations/*.sql` against any database — always surface the SQL and tell the user to apply manually.
 - Never auto-resolve a Retool resource pick without HITL, even when there's exactly one candidate of the matching type.
